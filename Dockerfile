@@ -1,25 +1,23 @@
-# Start with Python (easier for TensorFlow)
 FROM python:3.11-slim
 
-# Install Node.js
-RUN apt-get update && apt-get install -y curl
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-RUN apt-get install -y nodejs
+# Install Node.js just to build the React frontend
+RUN apt-get update && apt-get install -y curl \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
 
 WORKDIR /app
 
-# Install Python requirements
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Install Node requirements
+# 1. Build React Frontend
 COPY package*.json ./
 RUN npm install
-
-# Copy the rest of the code
 COPY . .
+RUN npm run build
 
-# Render uses the PORT env variable
-EXPOSE 3000
+# 2. Setup Python Backend
+RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["npm", "start"]
+# 3. Clean up node_modules to save RAM for the model
+RUN rm -rf node_modules
+
+EXPOSE 5000
+CMD ["python", "app.py"]

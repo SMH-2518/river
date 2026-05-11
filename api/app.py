@@ -1,46 +1,30 @@
 import os
 import numpy as np
 import joblib
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import tensorflow as tf
 
-app = Flask(__name__)
+# Reduce TensorFlow memory usage for Render Free Tier
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+tf.config.threading.set_intra_op_parallelism_threads(1)
+tf.config.threading.set_inter_op_parallelism_threads(1)
+
+# Point to the 'dist' folder where React build lives
+app = Flask(__name__, static_folder='dist', static_url_path='/')
 CORS(app)
 
-# Load the model and scalers
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # points to project/ folder
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Note: Ensure these filenames match your actual files in the folder!
 MODEL_PATH = os.path.join(BASE_DIR, "model_epoch_10_direct.keras")
 X_SCALER_PATH = os.path.join(BASE_DIR, "x_scaler.pkl")
 Y_SCALER_PATH = os.path.join(BASE_DIR, "y_scaler.pkl")
 
-if os.path.exists(MODEL_PATH):
-    print(f"Loading model from {MODEL_PATH}...")
-    try:
-        model = tf.keras.models.load_model(MODEL_PATH)
-        print("Model loaded successfully.")
-    except Exception as e:
-        print(f"Error loading model: {e}")
-        model = None
-else:
-    print(f"Model file not found at {MODEL_PATH}")
-    model = None
+# Load model and scalers
+model = tf.keras.models.load_model(MODEL_PATH)
+x_scaler = joblib.load(X_SCALER_PATH)
+y_scaler = joblib.load(Y_SCALER_PATH)
 
-try:
-    x_scaler = joblib.load(X_SCALER_PATH)
-    print("X Scaler loaded successfully.")
-except Exception as e:
-    print(f"Error loading X scaler: {e}")
-    x_scaler = None
-
-try:
-    y_scaler = joblib.load(Y_SCALER_PATH)
-    print("Y Scaler loaded successfully.")
-except Exception as e:
-    print(f"Error loading Y scaler: {e}")
-    y_scaler = None
-
-# Feature order (must match exactly what the model expects)
 FEATURE_KEYS = [
     'month', 'day_of_year', 'streamflow_today_cumecs', 'streamflow_anomaly_zscore',
     'flow_rate_of_change', 'flow_velocity_km_per_day', 'antecedent_rain_3d_sum',
@@ -54,24 +38,22 @@ FEATURE_KEYS = [
     'rain_basinsize_interaction', 'uparea_rain_interaction'
 ]
 
+# --- ROUTE TO SERVE REACT FRONTEND ---
+@app.route('/')
+def serve():
+    return send_from_directory(app.static_folder, 'index.html')
+
+@app.errorhandler(404)
+def not_found(e):
+    return send_from_directory(app.static_folder, 'index.html')
+
+# --- PREDICTION API ---
 @app.route('/predict', methods=['POST'])
 def predict():
-    if model is None or x_scaler is None or y_scaler is None:
-        return jsonify({'error': 'Model or Scalers not loaded on the server.'}), 500
-    
     data = request.json
-    if not data:
-        return jsonify({'error': 'No input data provided.'}), 400
-    
     try:
-        # Extract all 32 features in the correct order for the model
-        features = []
-        for key in FEATURE_KEYS:
-            if key not in data:
-                return jsonify({'error': f'Missing feature: {key}'}), 400
-            features.append(float(data[key]))
+        features = [float(data[key]) for key in FEATURE_KEYS]
         
-        # The 11 features that the scaler expects, in the exact order it was trained on
         SCALED_KEYS = [
             'streamflow_today_cumecs', 'flow_rate_of_change', 'flow_velocity_km_per_day',
             'antecedent_rain_3d_sum', 'antecedent_rain_7d_sum', 'antecedent_rain_15d_sum',
@@ -79,46 +61,25 @@ def predict():
             'monsoon_cumulative_rain', 'monsoon_intensity'
         ]
         
-        # Extract the 11 features to scale
         features_to_scale = [float(data[k]) for k in SCALED_KEYS]
         scaled_sub_array = x_scaler.transform(np.array(features_to_scale).reshape(1, -1))[0]
         
-        # Put the scaled values back into the full 32-feature array
         input_data = np.array(features, dtype=np.float32)
         for i, key in enumerate(SCALED_KEYS):
-            # Find the index of this key in the full FEATURE_KEYS
-            full_idx = FEATURE_KEYS.index(key)
-            input_data[full_idx] = scaled_sub_array[i]
+            input_data[FEATURE_KEYS.index(key)] = scaled_sub_array[i]
             
-        # Reshape to (1, 32)
         input_data = input_data.reshape(1, -1)
-        
-        # Run prediction
-        scaled_prediction = model.predict(input_data)
-        print(f"DEBUG: Raw model prediction (scaled): {scaled_prediction}")
-        
-        # Inverse transform the prediction
+        scaled_prediction = model.predict(input_data, verbose=0)
         predicted_value_array = y_scaler.inverse_transform(scaled_prediction)
         
-        # Predicted value from model is the "Delta" (change in flow)
-        predicted_delta = float(predicted_value_array[0][0]) if len(predicted_value_array.shape) > 1 else float(predicted_value_array[0])
-        print(f"DEBUG: Predicted delta (change): {predicted_delta}")
+        predicted_delta = float(predicted_value_array.flatten()[0])
+        final_prediction = max(0.0, float(data['streamflow_today_cumecs']) + predicted_delta)
         
-        # Final Prediction = Today's Flow + Predicted Delta
-        final_prediction = float(data['streamflow_today_cumecs']) + predicted_delta
-        
-        # Cap at 0 if negative
-        final_prediction = max(0.0, final_prediction)
-        print(f"DEBUG: Final predicted flow: {final_prediction}")
-        
-        return jsonify({
-            'value': final_prediction,
-            'delta': predicted_delta
-        })
-    
+        return jsonify({'value': final_prediction, 'delta': predicted_delta})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
-app=app
+    # Use PORT env variable for Render
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)

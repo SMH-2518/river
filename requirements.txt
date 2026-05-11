@@ -1,5 +1,7 @@
-streamlit
-pandas
-numpy
+flask
+flask-cors
+tensorflow-cpu==2.15.0
+numpy==1.26.4
 joblib
-tensorflow-cpu  # IMPORTANT: Using -cpu version saves massive RAM
+scikit-learn
+gunicorn
