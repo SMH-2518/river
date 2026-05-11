@@ -11,10 +11,11 @@ tf.config.threading.set_intra_op_parallelism_threads(1)
 tf.config.threading.set_inter_op_parallelism_threads(1)
 
 # Point to the 'dist' folder where React build lives
-app = Flask(__name__, static_folder='dist', static_url_path='/')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.normpath(os.path.join(BASE_DIR, '..', 'dist'))
+app = Flask(__name__, static_folder=STATIC_DIR, static_url_path='/')
 CORS(app)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Note: Ensure these filenames match your actual files in the folder!
 MODEL_PATH = os.path.join(BASE_DIR, "model_epoch_10_direct.keras")
 X_SCALER_PATH = os.path.join(BASE_DIR, "x_scaler.pkl")

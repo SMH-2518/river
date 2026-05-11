@@ -20,4 +20,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN rm -rf node_modules
 
 EXPOSE 5000
-CMD ["python", "app.py"]
+CMD ["python", "api/app.py"]
