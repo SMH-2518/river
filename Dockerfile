@@ -1,24 +1,25 @@
-# Use a lightweight Python image
+# Start with Python (easier for TensorFlow)
 FROM python:3.11-slim
 
-# Set the working directory inside the container
+# Install Node.js
+RUN apt-get update && apt-get install -y curl
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+RUN apt-get install -y nodejs
+
 WORKDIR /app
 
-# Install system dependencies needed for some Python libs
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    software-properties-common \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy everything from your local folder to the container
-COPY . .
-
-# Install Python dependencies
+# Install Python requirements
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Streamlit uses port 8501 by default
-EXPOSE 8501
+# Install Node requirements
+COPY package*.json ./
+RUN npm install
 
-# Command to run the app, binding to 0.0.0.0 and using Render's dynamic PORT
-CMD ["streamlit", "run", "weather.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+# Copy the rest of the code
+COPY . .
+
+# Render uses the PORT env variable
+EXPOSE 3000
+
+CMD ["npm", "start"]
